@@ -402,9 +402,13 @@ def test_rerender_overwrites_generated_files(config: DeployConfig, tmp_path: Pat
 
 
 def test_missing_pipeline_file_raises(config: DeployConfig, tmp_path: Path) -> None:
-    broken = replace(config, pipeline_file=tmp_path / "nope.py")
-    with pytest.raises(FileNotFoundError):
+    missing = tmp_path / "nope.py"
+    broken = replace(config, pipeline_file=missing)
+    with pytest.raises(FileNotFoundError) as excinfo:
         render_deploy_bundle(broken, tmp_path / "deploy")
+    assert excinfo.value.errno == errno.ENOENT
+    assert excinfo.value.filename == str(missing)
+    assert "No such file or directory" in str(excinfo.value)
 
 
 def test_cli_deploy_renders_and_prints_pointers(

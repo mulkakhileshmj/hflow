@@ -826,9 +826,13 @@ def test_the_workspace_is_never_copied_whatever_it_is_called(
 def test_missing_pipeline_file_raises(config: RuntimeConfig, tmp_path: Path) -> None:
     from dataclasses import replace
 
-    broken = replace(config, pipeline_file=tmp_path / "nope.py")
-    with pytest.raises(FileNotFoundError):
+    missing = tmp_path / "nope.py"
+    broken = replace(config, pipeline_file=missing)
+    with pytest.raises(FileNotFoundError) as excinfo:
         render_bundle(broken, tmp_path / "bundle")
+    assert excinfo.value.errno == errno.ENOENT
+    assert excinfo.value.filename == str(missing)
+    assert "No such file or directory" in str(excinfo.value)
 
 
 class TestBucketModeBundle:

@@ -264,6 +264,25 @@ def _download_to_file_atomically(get_result: Any, destination: Path) -> None:
         temporary_file.unlink(missing_ok=True)
 
 
+def _refuse_unusable_file_path(path: Path) -> None:
+    """Raise the errno-carrying FileNotFoundError for a directory or missing file."""
+    # Deliberately FileNotFoundError and not IsADirectoryError: the accurate
+    # class subclasses OSError, not FileNotFoundError, so an `except
+    # FileNotFoundError` stops catching it. Handlers depend on that:
+    # `_command_doctor` (reached through fetch_uri below) turns this into a
+    # finding rather than a traceback, and cli.py's `up` and `deploy` handlers
+    # turn it into exit 2; more name the class elsewhere under src/hflow/, and
+    # callers outside the repo are the real unknown. The three-argument form,
+    # with str(path) last, carries the accurate errno text without moving the
+    # class, so a CLI prints why the path failed and not just the path.
+    # Decided on #100 and #102; #144 fixed the sites that said ENOENT for a
+    # directory.
+    if path.is_dir():
+        raise FileNotFoundError(errno.EISDIR, os.strerror(errno.EISDIR), str(path))
+    if not path.is_file():
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path))
+
+
 @dataclass(frozen=True)
 class LocalStorageRoot:
     """A data root on the local filesystem -- the pure-stdlib fast path.
@@ -361,18 +380,7 @@ class LocalStorageRoot:
     def fetch(self, relative: str) -> Path:
         """The local file at ``relative`` (it already lives here)."""
         local_file = self.path / _validated_relative_key(relative)
-        if local_file.is_dir():
-            # Deliberately FileNotFoundError and not IsADirectoryError: the accurate
-            # class subclasses OSError, not FileNotFoundError, so an `except
-            # FileNotFoundError` stops catching it. `_command_doctor` is one such
-            # handler, reached through fetch_uri below, and it turns this into a
-            # finding rather than a traceback; sixteen more name the class
-            # elsewhere under src/hflow/, and callers outside the repo are the real
-            # unknown. The errno carries the accurate text without moving the class.
-            # Same decision as the four sites #102 covered. #144.
-            raise FileNotFoundError(errno.EISDIR, os.strerror(errno.EISDIR), str(local_file))
-        if not local_file.is_file():
-            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(local_file))
+        _refuse_unusable_file_path(local_file)
         return local_file
 
     def uri_for(self, relative: str) -> str:
@@ -696,9 +704,5 @@ def fetch_uri(uri: "str | Path") -> Path:
         parent_url, _, name = uri.rpartition("/")
         return BucketStorageRoot(parent_url).fetch(name)
     local_file = Path(uri)
-    if local_file.is_dir():
-        # FileNotFoundError, not IsADirectoryError, for the reason above.
-        raise FileNotFoundError(errno.EISDIR, os.strerror(errno.EISDIR), str(local_file))
-    if not local_file.is_file():
-        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(local_file))
+    _refuse_unusable_file_path(local_file)
     return local_file
